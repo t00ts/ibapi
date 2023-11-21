@@ -73,9 +73,7 @@ func (ic *IbClient) ConnState() int {
 }
 
 func (ic *IbClient) setConnState(connState int) {
-	preState := ic.conn.state
 	ic.conn.state = connState
-	log.Debug("change connection state", zap.Int("previous", preState), zap.Int("current", connState))
 }
 
 // GetReqID before request data or place order
@@ -86,7 +84,6 @@ func (ic *IbClient) GetReqID() int64 {
 // SetWrapper setup the Wrapper
 func (ic *IbClient) SetWrapper(wrapper IbWrapper) {
 	ic.wrapper = wrapper
-	log.Debug("set wrapper", zap.Reflect("wrapper", wrapper))
 	ic.decoder = ibDecoder{wrapper: ic.wrapper}
 }
 
@@ -104,7 +101,6 @@ func (ic *IbClient) SetConnectionOptions(opts string) {
 func (ic *IbClient) Connect(host string, port int, clientID int64) error {
 
 	ic.host, ic.port, ic.clientID = host, port, clientID
-	log.Info("Connect to client", zap.String("host", host), zap.Int("port", port), zap.Int64("clientID", clientID))
 	ic.setConnState(CONNECTING)
 	if err := ic.conn.connect(host, port); err != nil {
 		ic.wrapper.Error(NO_VALID_ID, CONNECT_FAIL.code, CONNECT_FAIL.msg)
@@ -126,7 +122,6 @@ func (ic *IbClient) Connect(host string, port int, clientID int64) error {
 6.reset the IbClient
 */
 func (ic *IbClient) Disconnect() error {
-	log.Debug("close terminatedSignal chan")
 	close(ic.terminatedSignal) // close make the term signal chan unblocked
 
 	if err := ic.conn.disconnect(); err != nil {
@@ -144,7 +139,6 @@ func (ic *IbClient) Disconnect() error {
 	}()
 	defer ic.reset()
 	defer ic.wrapper.ConnectionClosed()
-	defer log.Info("Disconnected!")
 
 	return ic.err
 }
@@ -164,7 +158,6 @@ func (ic *IbClient) startAPI() error {
 		startAPI = makeMsgBytes(mSTART_API, v, ic.clientID)
 	}
 
-	log.Debug("start API", zap.Binary("bytes", startAPI))
 	if _, err := ic.writer.Write(startAPI); err != nil {
 		return err
 	}
@@ -176,7 +169,6 @@ func (ic *IbClient) startAPI() error {
 // send the startApi header ,then receive serverVersion
 // and connection time to comfirm the connection with TWS
 func (ic *IbClient) HandShake() error {
-	log.Info("HandShake with TWS or GateWay")
 	var msg bytes.Buffer
 	var msgBytes []byte
 	head := []byte("API\x00")
@@ -195,7 +187,6 @@ func (ic *IbClient) HandShake() error {
 	msg.Write(head)
 	msg.Write(sizeofCV)
 	msg.Write(clientVersion)
-	log.Debug("send handShake header", zap.Binary("header", msg.Bytes()))
 	if _, err := ic.writer.Write(msg.Bytes()); err != nil {
 		return err
 	}
@@ -203,8 +194,6 @@ func (ic *IbClient) HandShake() error {
 	if err := ic.writer.Flush(); err != nil {
 		return err
 	}
-
-	log.Debug("recv handShake Info")
 
 	// scan once to get server info
 	if !ic.scanner.Scan() {
@@ -221,9 +210,6 @@ func (ic *IbClient) HandShake() error {
 	ic.decoder.setVersion(ic.serverVersion)
 	// ic.decoder.errChan = make(chan error, 100)
 	ic.decoder.setmsgID2process()
-
-	log.Info("handShake info", zap.Int("serverVersion", ic.serverVersion))
-	log.Info("handShake info", zap.String("connectionTime", ic.connTime))
 
 	// send startAPI to tell server that client is ready
 	if err := ic.startAPI(); err != nil {
@@ -271,7 +257,6 @@ comfirmReadyLoop:
 		}
 	}
 
-	log.Info("HandShake completed")
 	return nil
 }
 
@@ -286,7 +271,6 @@ func (ic *IbClient) ConnectionTime() string {
 }
 
 func (ic *IbClient) reset() {
-	log.Debug("reset ibClient")
 	ic.reqIDSeq = 0
 	ic.conn = &IbConnection{}
 	ic.host = ""
@@ -2902,6 +2886,7 @@ func (ic *IbClient) CancelWshEventData(reqID int64) {
 
 	ic.reqChan <- msg
 }
+
 //--------------------------three major goroutine -----------------------------------------------------
 /*
 1.goReceive scan a whole msg bytes and put it into msgChan
@@ -2909,20 +2894,16 @@ func (ic *IbClient) CancelWshEventData(reqID int64) {
 3.goRequest create a select loop to get request from reqChan and send it to tws or ib gateway
 */
 
-//goRequest will get the req from reqChan and send it to TWS
+// goRequest will get the req from reqChan and send it to TWS
 func (ic *IbClient) goRequest() {
-	log.Debug("requester start")
 	defer func() {
 		if errMsg := recover(); errMsg != nil {
 			err := errors.New(errMsg.(string))
-			log.Error("requester got unexpected error", zap.Error(err))
 			ic.err = err
 			// ic.Disconnect()
-			log.Debug("try to restart requester")
 			go ic.goRequest()
 		}
 	}()
-	defer log.Debug("requester end")
 	defer ic.wg.Done()
 
 	ic.wg.Add(1)
@@ -2936,10 +2917,9 @@ requestLoop:
 				break
 			}
 
-			nn, err := ic.writer.Write(req)
+			_, err := ic.writer.Write(req)
 			err = ic.writer.Flush()
 			if err != nil {
-				log.Error("write req error", zap.Int("nbytes", nn), zap.Binary("reqMsg", req), zap.Error(err))
 				ic.writer.Reset(ic.conn)
 				ic.errChan <- err
 			}
@@ -2950,17 +2930,14 @@ requestLoop:
 
 }
 
-//goReceive receive the msg from the socket, get the fields and put them into msgChan
-//goReceive handle the msgBuf which is different from the offical.Not continuously read, but split first and then decode
+// goReceive receive the msg from the socket, get the fields and put them into msgChan
+// goReceive handle the msgBuf which is different from the offical.Not continuously read, but split first and then decode
 func (ic *IbClient) goReceive() {
-	log.Debug("receiver start")
 	defer func() {
 		if errMsg := recover(); errMsg != nil {
 			err := errors.New(errMsg.(string))
-			log.Error("receiver got unexpected error", zap.Error(err))
 			ic.err = err
 			// ic.Disconnect()
-			log.Debug("try to restart receiver")
 			go ic.goReceive()
 		} else {
 			select {
@@ -2970,7 +2947,6 @@ func (ic *IbClient) goReceive() {
 			}
 		}
 	}()
-	defer log.Debug("receiver end")
 	defer ic.wg.Done()
 
 	ic.wg.Add(1)
@@ -2988,7 +2964,6 @@ func (ic *IbClient) goReceive() {
 	default:
 		switch err := ic.scanner.Err(); err {
 		case nil:
-			log.Debug("scanner Done")
 			// go ic.Disconnect()
 		case bufio.ErrTooLong:
 			errBytes := ic.scanner.Bytes()
@@ -3001,20 +2976,16 @@ func (ic *IbClient) goReceive() {
 
 }
 
-//goDecode decode the fields received from the msgChan
+// goDecode decode the fields received from the msgChan
 func (ic *IbClient) goDecode() {
-	log.Debug("decoder start")
 	defer func() {
 		if errMsg := recover(); errMsg != nil {
 			err := errors.New(errMsg.(string))
-			log.Error("decoder got unexpected error", zap.Error(err))
 			ic.err = err
 			// ic.Disconnect()
-			log.Debug("try to restart decoder")
 			go ic.goDecode()
 		}
 	}()
-	defer log.Debug("decoder end")
 	defer ic.wg.Done()
 
 	ic.wg.Add(1)
@@ -3045,7 +3016,6 @@ func (ic *IbClient) Run() error {
 		ic.wrapper.Error(NO_VALID_ID, NOT_CONNECTED.code, NOT_CONNECTED.msg)
 		return NOT_CONNECTED
 	}
-	log.Info("run client")
 
 	go ic.goRequest()
 	go ic.goDecode()

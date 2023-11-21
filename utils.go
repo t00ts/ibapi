@@ -72,7 +72,6 @@ func readMsgBytes(reader *bufio.Reader) ([]byte, error) {
 	}
 
 	size := int(binary.BigEndian.Uint32(sizeBytes))
-	log.Debug("readMsgBytes", zap.Int("size", size))
 
 	msgBytes := make([]byte, size)
 
@@ -89,7 +88,6 @@ func readMsgBytes(reader *bufio.Reader) ([]byte, error) {
 
 	}
 
-	log.Debug("readMsgBytes", zap.Binary("msgBytes", msgBytes))
 	return msgBytes, nil
 
 }
@@ -246,7 +244,7 @@ func handleEmpty(d interface{}) string {
 	}
 }
 
-//InitDefault try to init the object with the default tag, that is a common way but not a efficent way
+// InitDefault try to init the object with the default tag, that is a common way but not a efficent way
 func InitDefault(o interface{}) {
 	t := reflect.TypeOf(o).Elem()
 	v := reflect.ValueOf(o).Elem()

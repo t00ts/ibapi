@@ -30,7 +30,6 @@ func (d *ibDecoder) setWrapper(w IbWrapper) {
 func (d *ibDecoder) interpret(msgBytes []byte) {
 	msgBuf := NewMsgBuffer(msgBytes)
 	if msgBuf.Len() == 0 {
-		log.Debug("no fields")
 		return
 	}
 
@@ -42,8 +41,6 @@ func (d *ibDecoder) interpret(msgBytes []byte) {
 	// 		d.errChan <- err.(error)
 	// 	}
 	// }()
-
-	// log.Debug("interpret", zap.Binary("MsgBytes", msgBuf.Bytes()))
 
 	// read the msg type
 	MsgID := msgBuf.readInt()
